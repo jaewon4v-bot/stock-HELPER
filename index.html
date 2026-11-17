@@ -3,11 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <!-- 아이폰 홈 화면 앱 모드 설정 -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="4지표 주식도우미" />
-  <title>4-지표 주식 도우미 (iOS)</title>
+  <title>4-지표 주식 도우미 (안정화판)</title>
   <style>
     :root {
       --bg: #0b1120; --card: #162032; --border: #283548;
@@ -24,7 +23,7 @@
     .search-box { display: flex; gap: 8px; }
     input {
       width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border);
-      background: #0b1120; color: var(--text); font-size: 16px; /* iOS 자동 줌 방지용 16px */
+      background: #0b1120; color: var(--text); font-size: 16px;
     }
     button {
       padding: 12px 16px; border-radius: 12px; border: none; background: var(--accent);
@@ -44,11 +43,11 @@
     .m-val { font-size: 1.15rem; font-weight: 700; margin: 4px 0; }
     .m-sub { color: var(--muted); font-size: 0.72rem; line-height: 1.3; }
     .badge { display: inline-block; padding: 5px 10px; border-radius: 8px; font-weight: 700; font-size: 0.82rem; margin-top: 4px; }
-    #statusMsg { color: var(--accent); font-size: 0.82rem; margin-top: 8px; }
+    #statusMsg { color: var(--accent); font-size: 0.82rem; margin-top: 8px; line-height: 1.4; }
     svg { width: 100%; height: 180px; background: #0b1120; border-radius: 10px; margin-top: 10px; }
     .watch-item {
       display: flex; justify-content: space-between; align-items: center;
-      padding: 11px 0; border-bottom: 1px solid var(--border);
+      padding: 11px 0; border-bottom: 1px solid var(--border); cursor: pointer;
     }
     .watch-item:last-child { border-bottom: none; }
   </style>
@@ -73,7 +72,7 @@
   <!-- 2. 검색 및 빠른 칩 -->
   <div class="card">
     <div class="search-box">
-      <input type="text" id="tickerInput" placeholder="종목명 또는 티커 (예: 로빈후드, 일진전기)" onkeydown="if(event.key==='Enter') runSearch()" />
+      <input type="text" id="tickerInput" placeholder="종목명 또는 티커 (예: 로빈후드, 일진전기, NVDA)" onkeydown="if(event.key==='Enter') runSearch()" />
       <button onclick="runSearch()">검색</button>
     </div>
     <div class="chips" id="chipContainer"></div>
@@ -126,7 +125,7 @@
 
   <!-- 4. 일괄 스캔 결과 -->
   <div id="scanCard" class="card" style="display:none;">
-    <div style="font-weight:700; margin-bottom:8px;">🏆 관심종목 & 대표주 고득점 순위</div>
+    <div style="font-weight:700; margin-bottom:8px;">🏆 관심종목 고득점 순위 (터치 시 상세차트)</div>
     <div id="scanList"></div>
   </div>
 </div>
@@ -135,12 +134,14 @@
 let currentFG = 29.3;
 let currentFGRating = "FEAR";
 let lastSearched = null;
+const memoryCache = {}; // 5분 캐시
 
 const ALIAS_MAP = {
   "로빈후드": "HOOD", "알파벳": "GOOGL", "구글": "GOOGL",
   "일진전기": "103590.KS", "파미셀": "005690.KS", "삼성전자": "005930.KS",
   "sk하이닉스": "000660.KS", "엔비디아": "NVDA", "테슬라": "TSLA",
-  "애플": "AAPL", "마이크로소프트": "MSFT", "아마존": "AMZN", "메타": "META"
+  "애플": "AAPL", "마이크로소프트": "MSFT", "아마존": "AMZN", "메타": "META",
+  "팔란티어": "PLTR", "브로드컴": "AVGO", "넷플릭스": "NFLX"
 };
 
 const DEFAULT_WATCH = [
@@ -180,25 +181,54 @@ function saveCurrentToWatchlist() {
   }
 }
 
+// 4초 타임아웃이 적용된 fetch 도우미
+async function fetchWithTimeout(url, ms = 4500) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), ms);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(id);
+    return res;
+  } catch (e) {
+    clearTimeout(id);
+    throw e;
+  }
+}
+
+// 4중 프록시 자동 우회 호출기
 async function fetchTextSmart(targetUrl) {
-  const urls = [
-    `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`,
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`
+  const proxies = [
+    async () => {
+      const r = await fetchWithTimeout(`https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`);
+      if (!r.ok) throw new Error("fail");
+      return await r.text();
+    },
+    async () => {
+      const r = await fetchWithTimeout(`https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`);
+      if (!r.ok) throw new Error("fail");
+      const j = await r.json();
+      if (!j.contents) throw new Error("empty");
+      return j.contents;
+    },
+    async () => {
+      const r = await fetchWithTimeout(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`);
+      if (!r.ok) throw new Error("fail");
+      return await r.text();
+    },
+    async () => {
+      const r = await fetchWithTimeout(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`);
+      if (!r.ok) throw new Error("fail");
+      return await r.text();
+    }
   ];
-  for (let i = 0; i < urls.length; i++) {
+
+  for (const run of proxies) {
     try {
-      const res = await fetch(urls[i]);
-      if (!res.ok) continue;
-      if (i === 0) {
-        const json = await res.json();
-        if (json.contents) return json.contents;
-      } else {
-        const txt = await res.text();
-        if (txt.length > 20) return txt;
-      }
+      const txt = await run();
+      if (txt && txt.length > 30 && !txt.includes("Too Many Requests")) return txt;
     } catch (e) {}
   }
-  throw new Error("연결 지연");
+  throw new Error("중계 서버 일시 혼잡");
 }
 
 async function loadFG() {
@@ -219,6 +249,7 @@ function applyManualFG() {
     currentFG = v;
     currentFGRating = "수동 입력";
     document.getElementById("fgDisplay").textContent = `${currentFG}점 (수동)`;
+    Object.keys(memoryCache).forEach(k => delete memoryCache[k]);
     if (document.getElementById("tickerInput").value.trim()) runSearch();
   }
 }
@@ -288,20 +319,57 @@ function calcIndicators(closes) {
 async function fetchStock(rawQuery) {
   const clean = rawQuery.trim();
   const ticker = (ALIAS_MAP[clean.toLowerCase()] || clean).toUpperCase();
+
+  // 5분 이내 캐시 확인
+  if (memoryCache[ticker] && (Date.now() - memoryCache[ticker].ts < 300000)) {
+    return memoryCache[ticker].data;
+  }
+
+  // 1) Yahoo Finance (query1 & query2 순차 시도)
+  for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
+    try {
+      const yfUrl = `https://${host}/v8/finance/chart/${encodeURIComponent(ticker)}?range=6mo&interval=1d`;
+      const json = JSON.parse(await fetchTextSmart(yfUrl));
+      const result = json.chart.result[0];
+      const name = result.meta.shortName || ticker;
+      const closes = result.indicators.quote[0].close.filter((v) => v !== null && !isNaN(v));
+      if (closes.length >= 35) {
+        const out = { name, ticker, ...calcIndicators(closes) };
+        memoryCache[ticker] = { ts: Date.now(), data: out };
+        return out;
+      }
+    } catch (e) {}
+  }
+
+  // 2) 한국 주식 전용 네이버 금융 차트 XML 백업
+  if (ticker.endsWith(".KS") || ticker.endsWith(".KQ")) {
+    try {
+      const code = ticker.split(".")[0];
+      const naverUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${code}&timeframe=day&count=130&requestType=0`;
+      const xml = await fetchTextSmart(naverUrl);
+      const matches = [...xml.matchAll(/data="([^"]+)"/g)];
+      const closes = matches.map(m => parseFloat(m[1].split("|")[4])).filter(v => !isNaN(v));
+      if (closes.length >= 35) {
+        const out = { name: ticker, ticker, ...calcIndicators(closes) };
+        memoryCache[ticker] = { ts: Date.now(), data: out };
+        return out;
+      }
+    } catch (e) {}
+  }
+
+  // 3) 미국 주식 Stooq CSV 백업
   try {
-    const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=6mo&interval=1d`;
-    const json = JSON.parse(await fetchTextSmart(yfUrl));
-    const result = json.chart.result[0];
-    const name = result.meta.shortName || ticker;
-    const closes = result.indicators.quote[0].close.filter((v) => v !== null && !isNaN(v));
-    if (closes.length >= 35) return { name, ticker, ...calcIndicators(closes) };
+    const stooqSym = ticker.toLowerCase() + ".us";
+    const csv = await fetchTextSmart(`https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSym)}&i=d`);
+    const closes = csv.trim().split("\n").slice(1).map((l) => parseFloat(l.split(",")[4])).filter((v) => !isNaN(v)).slice(-130);
+    if (closes.length >= 35) {
+      const out = { name: ticker, ticker, ...calcIndicators(closes) };
+      memoryCache[ticker] = { ts: Date.now(), data: out };
+      return out;
+    }
   } catch (e) {}
 
-  const stooqSym = ticker.endsWith(".KS") || ticker.endsWith(".KQ") ? ticker.split(".")[0] + ".kr" : ticker.toLowerCase() + ".us";
-  const csv = await fetchTextSmart(`https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSym)}&i=d`);
-  const closes = csv.trim().split("\n").slice(1).map((l) => parseFloat(l.split(",")[4])).filter((v) => !isNaN(v)).slice(-130);
-  if (closes.length < 35) throw new Error("조회 실패");
-  return { name: ticker, ticker, ...calcIndicators(closes) };
+  throw new Error("조회 실패");
 }
 
 function drawChart(d) {
@@ -351,7 +419,7 @@ async function runSearch() {
     drawChart(d);
     status.textContent = "✅ 완료!";
   } catch (e) {
-    status.textContent = "❌ 조회 실패: 티커(예: NVDA, 103590.KS)를 확인 후 다시 눌러주세요.";
+    status.textContent = "❌ 중계 서버 일시 혼잡입니다. 3초 후 한 번 더 눌러주세요.";
   }
 }
 
@@ -360,13 +428,18 @@ function quickSearch(t) {
   runSearch();
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 async function scanSavedList() {
   const list = getWatchlist();
   const status = document.getElementById("statusMsg");
-  status.textContent = "⏳ 관심종목 일괄 스캔 중...";
   const rows = [];
-  for (const item of list) {
-    try { rows.push(await fetchStock(item.ticker)); } catch (e) {}
+  for (let i = 0; i < list.length; i++) {
+    status.textContent = `⏳ 관심종목 스캔 중 (${i + 1}/${list.length}: ${list[i].label})...`;
+    try {
+      rows.push(await fetchStock(list[i].ticker));
+    } catch (e) {}
+    await sleep(400); // 차단 방지용 0.4초 간격
   }
   rows.sort((a, b) => b.total - a.total);
   document.getElementById("scanList").innerHTML = rows.map((r) => {
@@ -384,7 +457,7 @@ async function scanSavedList() {
     </div>`;
   }).join("");
   document.getElementById("scanCard").style.display = "block";
-  status.textContent = `✅ ${rows.length}개 종목 스캔 완료! (항목 터치 시 상세차트 표시)`;
+  status.textContent = `✅ ${list.length}개 중 ${rows.length}개 종목 스캔 완료!`;
 }
 
 renderChips();
