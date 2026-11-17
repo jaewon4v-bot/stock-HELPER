@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <!-- 아이폰 홈 화면 앱 모드 설정 -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="4지표 주식도우미" />
+  <title>4-지표 주식 도우미 (iOS)</title>
+  <style>
+    :root {
+      --bg: #0b1120; --card: #162032; --border: #283548;
+      --text: #f8fafc; --muted: #94a3b8; --accent: #38bdf8;
+      --green: #22c55e; --yellow: #eab308; --red: #ef4444;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif; }
+    body { margin: 0; background: var(--bg); color: var(--text); padding: 16px 14px 40px; }
+    .container { max-width: 600px; margin: 0 auto; }
+    h1 { font-size: 1.35rem; margin: 4px 0; }
+    .sub { color: var(--muted); font-size: 0.82rem; margin-bottom: 14px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+    .fg-bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .search-box { display: flex; gap: 8px; }
+    input {
+      width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border);
+      background: #0b1120; color: var(--text); font-size: 16px; /* iOS 자동 줌 방지용 16px */
+    }
+    button {
+      padding: 12px 16px; border-radius: 12px; border: none; background: var(--accent);
+      color: #0b1120; font-weight: 700; font-size: 0.95rem; cursor: pointer; white-space: nowrap;
+    }
+    button:active { transform: scale(0.97); }
+    button.sub-btn { background: #283548; color: var(--text); font-weight: 600; font-size: 0.85rem; padding: 9px 12px; }
+    .chips { display: flex; gap: 7px; overflow-x: auto; padding: 10px 0 2px; -webkit-overflow-scrolling: touch; }
+    .chips::-webkit-scrollbar { display: none; }
+    .chip {
+      background: #243146; color: #e2e8f0; padding: 7px 12px; border-radius: 999px;
+      font-size: 0.82rem; white-space: nowrap; cursor: pointer; border: 1px solid #334155;
+    }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+    .metric { background: #0b1120; border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+    .m-label { color: var(--muted); font-size: 0.75rem; }
+    .m-val { font-size: 1.15rem; font-weight: 700; margin: 4px 0; }
+    .m-sub { color: var(--muted); font-size: 0.72rem; line-height: 1.3; }
+    .badge { display: inline-block; padding: 5px 10px; border-radius: 8px; font-weight: 700; font-size: 0.82rem; margin-top: 4px; }
+    #statusMsg { color: var(--accent); font-size: 0.82rem; margin-top: 8px; }
+    svg { width: 100%; height: 180px; background: #0b1120; border-radius: 10px; margin-top: 10px; }
+    .watch-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 11px 0; border-bottom: 1px solid var(--border);
+    }
+    .watch-item:last-child { border-bottom: none; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>📈 4-지표 주식 도우미</h1>
+  <div class="sub">RSI · MACD · 볼린저 밴드 · Fear & Greed 모바일 스캐너</div>
+
+  <!-- 1. 시장 공포·탐욕 지수 -->
+  <div class="card fg-bar">
+    <div>
+      <div style="color:var(--muted); font-size:0.75rem;">🧭 CNN Fear & Greed</div>
+      <strong id="fgDisplay" style="font-size:1.1rem;">불러오는 중...</strong>
+    </div>
+    <div style="display:flex; gap:6px; align-items:center;">
+      <input type="number" id="fgManual" placeholder="수동(0-100)" style="width:105px; padding:8px 10px; font-size:14px;" />
+      <button class="sub-btn" onclick="applyManualFG()">적용</button>
+    </div>
+  </div>
+
+  <!-- 2. 검색 및 빠른 칩 -->
+  <div class="card">
+    <div class="search-box">
+      <input type="text" id="tickerInput" placeholder="종목명 또는 티커 (예: 로빈후드, 일진전기)" onkeydown="if(event.key==='Enter') runSearch()" />
+      <button onclick="runSearch()">검색</button>
+    </div>
+    <div class="chips" id="chipContainer"></div>
+    <div style="display:flex; gap:8px; margin-top:10px;">
+      <button class="sub-btn" style="flex:1;" onclick="scanSavedList()">⚡ 내 관심종목 전체 스캔</button>
+      <button class="sub-btn" onclick="saveCurrentToWatchlist()">⭐ 관심종목 추가</button>
+    </div>
+    <div id="statusMsg"></div>
+  </div>
+
+  <!-- 3. 단일 종목 분석 결과 -->
+  <div id="resultCard" class="card" style="display:none;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+      <div>
+        <div id="resTitle" style="font-size:1.15rem; font-weight:700;"></div>
+        <div id="resPrice" style="color:var(--muted); font-size:0.88rem; margin-top:3px;"></div>
+      </div>
+      <div style="text-align:right;">
+        <div id="resScore" style="font-size:1.45rem; font-weight:800;"></div>
+        <div id="resBadge"></div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="metric">
+        <div class="m-label">RSI (14일) · 25점 만점</div>
+        <div class="m-val" id="mRsi">-</div>
+        <div class="m-sub" id="mRsiSub"></div>
+      </div>
+      <div class="metric">
+        <div class="m-label">볼린저 %B · 25점 만점</div>
+        <div class="m-val" id="mBb">-</div>
+        <div class="m-sub" id="mBbSub"></div>
+      </div>
+      <div class="metric">
+        <div class="m-label">MACD · 20점 만점</div>
+        <div class="m-val" id="mMacd">-</div>
+        <div class="m-sub" id="mMacdSub"></div>
+      </div>
+      <div class="metric">
+        <div class="m-label">시장 심리 · 30점 만점</div>
+        <div class="m-val" id="mFg">-</div>
+        <div class="m-sub" id="mFgSub"></div>
+      </div>
+    </div>
+
+    <div style="margin-top:12px; font-size:0.78rem; color:var(--muted);">📊 최근 60일 주가 & 볼린저 밴드</div>
+    <svg id="bbChart" viewBox="0 0 600 180"></svg>
+  </div>
+
+  <!-- 4. 일괄 스캔 결과 -->
+  <div id="scanCard" class="card" style="display:none;">
+    <div style="font-weight:700; margin-bottom:8px;">🏆 관심종목 & 대표주 고득점 순위</div>
+    <div id="scanList"></div>
+  </div>
+</div>
+
+<script>
+let currentFG = 29.3;
+let currentFGRating = "FEAR";
+let lastSearched = null;
+
+const ALIAS_MAP = {
+  "로빈후드": "HOOD", "알파벳": "GOOGL", "구글": "GOOGL",
+  "일진전기": "103590.KS", "파미셀": "005690.KS", "삼성전자": "005930.KS",
+  "sk하이닉스": "000660.KS", "엔비디아": "NVDA", "테슬라": "TSLA",
+  "애플": "AAPL", "마이크로소프트": "MSFT", "아마존": "AMZN", "메타": "META"
+};
+
+const DEFAULT_WATCH = [
+  { label: "로빈후드", ticker: "HOOD" },
+  { label: "알파벳", ticker: "GOOGL" },
+  { label: "일진전기", ticker: "103590.KS" },
+  { label: "파미셀", ticker: "005690.KS" },
+  { label: "엔비디아", ticker: "NVDA" },
+  { label: "S&P500", ticker: "SPY" }
+];
+
+function getWatchlist() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("ios_stock_watch"));
+    return Array.isArray(saved) && saved.length > 0 ? saved : DEFAULT_WATCH;
+  } catch (e) { return DEFAULT_WATCH; }
+}
+
+function renderChips() {
+  const list = getWatchlist();
+  document.getElementById("chipContainer").innerHTML = list.map(
+    (item) => `<span class="chip" onclick="quickSearch('${item.ticker}')">${item.label}</span>`
+  ).join("");
+}
+
+function saveCurrentToWatchlist() {
+  if (!lastSearched) {
+    document.getElementById("statusMsg").textContent = "먼저 종목을 검색한 뒤 추가 버튼을 눌러주세요.";
+    return;
+  }
+  const list = getWatchlist();
+  if (!list.some((x) => x.ticker === lastSearched.ticker)) {
+    list.unshift({ label: lastSearched.name.slice(0, 8), ticker: lastSearched.ticker });
+    localStorage.setItem("ios_stock_watch", JSON.stringify(list.slice(0, 15)));
+    renderChips();
+    document.getElementById("statusMsg").textContent = `⭐ '${lastSearched.ticker}'가 상단 관심종목에 저장되었습니다.`;
+  }
+}
+
+async function fetchTextSmart(targetUrl) {
+  const urls = [
+    `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`,
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`
+  ];
+  for (let i = 0; i < urls.length; i++) {
+    try {
+      const res = await fetch(urls[i]);
+      if (!res.ok) continue;
+      if (i === 0) {
+        const json = await res.json();
+        if (json.contents) return json.contents;
+      } else {
+        const txt = await res.text();
+        if (txt.length > 20) return txt;
+      }
+    } catch (e) {}
+  }
+  throw new Error("연결 지연");
+}
+
+async function loadFG() {
+  try {
+    const raw = await fetchTextSmart("https://production.dataviz.cnn.io/index/fearandgreed/graphdata");
+    const data = JSON.parse(raw);
+    currentFG = Number(data.fear_and_greed.score.toFixed(1));
+    currentFGRating = data.fear_and_greed.rating.toUpperCase();
+    document.getElementById("fgDisplay").textContent = `${currentFG}점 (${currentFGRating})`;
+  } catch (e) {
+    document.getElementById("fgDisplay").textContent = `${currentFG}점 (기본 반영)`;
+  }
+}
+
+function applyManualFG() {
+  const v = parseFloat(document.getElementById("fgManual").value);
+  if (!isNaN(v) && v >= 0 && v <= 100) {
+    currentFG = v;
+    currentFGRating = "수동 입력";
+    document.getElementById("fgDisplay").textContent = `${currentFG}점 (수동)`;
+    if (document.getElementById("tickerInput").value.trim()) runSearch();
+  }
+}
+
+function calcIndicators(closes) {
+  const n = closes.length;
+  let avgGain = 0, avgLoss = 0;
+  for (let i = 1; i <= 14; i++) {
+    const d = closes[i] - closes[i - 1];
+    if (d >= 0) avgGain += d; else avgLoss -= d;
+  }
+  avgGain /= 14; avgLoss /= 14;
+  const rsiArr = new Array(n).fill(50);
+  rsiArr[14] = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+  for (let i = 15; i < n; i++) {
+    const d = closes[i] - closes[i - 1];
+    avgGain = (avgGain * 13 + (d > 0 ? d : 0)) / 14;
+    avgLoss = (avgLoss * 13 + (d < 0 ? -d : 0)) / 14;
+    rsiArr[i] = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+  }
+
+  const ema = (arr, span) => {
+    const k = 2 / (span + 1), out = [arr[0]];
+    for (let i = 1; i < arr.length; i++) out.push(arr[i] * k + out[i - 1] * (1 - k));
+    return out;
+  };
+  const ema12 = ema(closes, 12), ema26 = ema(closes, 26);
+  const macd = closes.map((_, i) => ema12[i] - ema26[i]);
+  const signal = ema(macd, 9);
+  const hist = macd.map((m, i) => m - signal[i]);
+
+  const mid = new Array(n).fill(null), upper = new Array(n).fill(null), lower = new Array(n).fill(null);
+  for (let i = 19; i < n; i++) {
+    const slice = closes.slice(i - 19, i + 1);
+    const mean = slice.reduce((a, b) => a + b, 0) / 20;
+    const std = Math.sqrt(slice.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / 20);
+    mid[i] = mean; upper[i] = mean + 2 * std; lower[i] = mean - 2 * std;
+  }
+
+  const last = n - 1, prev = n - 2;
+  const price = closes[last], rsiNow = rsiArr[last], rsiPrev = rsiArr[prev];
+  const pctB = (price - lower[last]) / (upper[last] - lower[last]);
+  const histNow = hist[last], histPrev = hist[prev];
+  const golden = macd[prev] <= signal[prev] && macd[last] > signal[last];
+  const dead = macd[prev] >= signal[prev] && macd[last] < signal[last];
+
+  const sFg = currentFG <= 25 ? 30 : (currentFG <= 45 ? 18 : (currentFG <= 55 ? 10 : 4));
+  const sBb = pctB <= 0 ? 25 : (pctB <= 0.2 ? 18 : (pctB <= 0.5 ? 8 : 2));
+  const sRsi = rsiNow <= 30 ? (rsiNow > rsiPrev ? 25 : 20) : (rsiNow <= 40 ? 12 : (rsiNow < 70 ? 5 : 0));
+
+  let sMacd = 0, macdText = "하락 추세";
+  if (golden) { sMacd = 20; macdText = "골든크로스!"; }
+  else if (dead) { sMacd = 0; macdText = "데드크로스"; }
+  else if (histNow >= 0 && histNow >= histPrev) { sMacd = 12; macdText = "상승 강화"; }
+  else if (histNow >= 0) { sMacd = 8; macdText = "상승 둔화"; }
+  else if (histNow > histPrev) { sMacd = 15; macdText = "반등 조짐"; }
+
+  const total = sFg + sBb + sRsi + sMacd;
+  let verdict = "⚪ 중립/관망", color = "#94a3b8";
+  if (total >= 70) { verdict = "🟢 강력 분할매수"; color = "#22c55e"; }
+  else if (total >= 55) { verdict = "🟡 매수 관찰"; color = "#eab308"; }
+  else if (total <= 25) { verdict = "🔴 과열/익절검토"; color = "#ef4444"; }
+
+  return { price, rsiNow, rsiPrev, pctB, upper, mid, lower, closes, histNow, macdText, sFg, sBb, sRsi, sMacd, total, verdict, color };
+}
+
+async function fetchStock(rawQuery) {
+  const clean = rawQuery.trim();
+  const ticker = (ALIAS_MAP[clean.toLowerCase()] || clean).toUpperCase();
+  try {
+    const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=6mo&interval=1d`;
+    const json = JSON.parse(await fetchTextSmart(yfUrl));
+    const result = json.chart.result[0];
+    const name = result.meta.shortName || ticker;
+    const closes = result.indicators.quote[0].close.filter((v) => v !== null && !isNaN(v));
+    if (closes.length >= 35) return { name, ticker, ...calcIndicators(closes) };
+  } catch (e) {}
+
+  const stooqSym = ticker.endsWith(".KS") || ticker.endsWith(".KQ") ? ticker.split(".")[0] + ".kr" : ticker.toLowerCase() + ".us";
+  const csv = await fetchTextSmart(`https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSym)}&i=d`);
+  const closes = csv.trim().split("\n").slice(1).map((l) => parseFloat(l.split(",")[4])).filter((v) => !isNaN(v)).slice(-130);
+  if (closes.length < 35) throw new Error("조회 실패");
+  return { name: ticker, ticker, ...calcIndicators(closes) };
+}
+
+function drawChart(d) {
+  const svg = document.getElementById("bbChart");
+  const len = Math.min(60, d.closes.length), start = d.closes.length - len;
+  const cS = d.closes.slice(start), uS = d.upper.slice(start), mS = d.mid.slice(start), lS = d.lower.slice(start);
+  const all = [...cS, ...uS, ...lS].filter((v) => v !== null);
+  const minV = Math.min(...all), maxV = Math.max(...all);
+  const toX = (i) => (i / (len - 1)) * 570 + 15;
+  const toY = (v) => 165 - ((v - minV) / (maxV - minV || 1)) * 145;
+  const path = (arr) => arr.map((v, i) => v === null ? "" : `${i === 0 || arr[i-1] === null ? "M" : "L"}${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(" ");
+  svg.innerHTML = `
+    <path d="${path(uS)}" fill="none" stroke="#ef4444" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <path d="${path(mS)}" fill="none" stroke="#94a3b8" stroke-width="1"/>
+    <path d="${path(lS)}" fill="none" stroke="#22c55e" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <path d="${path(cS)}" fill="none" stroke="#38bdf8" stroke-width="2.4"/>
+  `;
+}
+
+async function runSearch() {
+  const q = document.getElementById("tickerInput").value;
+  if (!q.trim()) return;
+  const status = document.getElementById("statusMsg");
+  status.textContent = "⏳ 주가 및 4대 지표 계산 중...";
+  try {
+    const d = await fetchStock(q);
+    lastSearched = d;
+    const isKr = d.ticker.endsWith(".KS") || d.ticker.endsWith(".KQ");
+    const fmt = (v) => isKr ? `₩${Math.round(v).toLocaleString()}` : `$${v.toFixed(2)}`;
+
+    document.getElementById("resultCard").style.display = "block";
+    document.getElementById("resTitle").textContent = `${d.name} (${d.ticker})`;
+    document.getElementById("resPrice").textContent = `일봉 종가: ${fmt(d.price)}`;
+    document.getElementById("resScore").textContent = `${d.total}점`;
+    document.getElementById("resScore").style.color = d.color;
+    document.getElementById("resBadge").innerHTML = `<span class="badge" style="background:${d.color}22; color:${d.color};">${d.verdict}</span>`;
+
+    document.getElementById("mRsi").textContent = `${d.rsiNow.toFixed(1)} (${d.sRsi}점)`;
+    document.getElementById("mRsiSub").textContent = `전일 ${d.rsiPrev.toFixed(1)} (30↓ 과매도)`;
+    document.getElementById("mBb").textContent = `${(d.pctB * 100).toFixed(1)}% (${d.sBb}점)`;
+    document.getElementById("mBbSub").textContent = `하 ${fmt(d.lower[d.lower.length-1])} / 상 ${fmt(d.upper[d.upper.length-1])}`;
+    document.getElementById("mMacd").textContent = `${d.histNow.toFixed(3)} (${d.sMacd}점)`;
+    document.getElementById("mMacdSub").textContent = d.macdText;
+    document.getElementById("mFg").textContent = `${currentFG}점 (${d.sFg}점)`;
+    document.getElementById("mFgSub").textContent = currentFGRating;
+
+    drawChart(d);
+    status.textContent = "✅ 완료!";
+  } catch (e) {
+    status.textContent = "❌ 조회 실패: 티커(예: NVDA, 103590.KS)를 확인 후 다시 눌러주세요.";
+  }
+}
+
+function quickSearch(t) {
+  document.getElementById("tickerInput").value = t;
+  runSearch();
+}
+
+async function scanSavedList() {
+  const list = getWatchlist();
+  const status = document.getElementById("statusMsg");
+  status.textContent = "⏳ 관심종목 일괄 스캔 중...";
+  const rows = [];
+  for (const item of list) {
+    try { rows.push(await fetchStock(item.ticker)); } catch (e) {}
+  }
+  rows.sort((a, b) => b.total - a.total);
+  document.getElementById("scanList").innerHTML = rows.map((r) => {
+    const isKr = r.ticker.endsWith(".KS") || r.ticker.endsWith(".KQ");
+    const fmt = (v) => isKr ? `₩${Math.round(v).toLocaleString()}` : `$${v.toFixed(2)}`;
+    return `<div class="watch-item" onclick="quickSearch('${r.ticker}')">
+      <div>
+        <strong>${r.name}</strong> <span style="color:var(--muted); font-size:0.8rem;">(${r.ticker})</span>
+        <div style="color:var(--muted); font-size:0.78rem;">${fmt(r.price)} · RSI ${r.rsiNow.toFixed(1)} · BB ${(r.pctB*100).toFixed(0)}%</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="color:${r.color}; font-weight:800; font-size:1.05rem;">${r.total}점</div>
+        <div style="font-size:0.75rem; color:${r.color};">${r.verdict}</div>
+      </div>
+    </div>`;
+  }).join("");
+  document.getElementById("scanCard").style.display = "block";
+  status.textContent = `✅ ${rows.length}개 종목 스캔 완료! (항목 터치 시 상세차트 표시)`;
+}
+
+renderChips();
+loadFG();
+</script>
+</body>
+</html>
