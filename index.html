@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="4지표 주식도우미" />
-  <title>4-지표 주식 도우미 (안정화판)</title>
+  <title>4-지표 주식 도우미 (고속판)</title>
   <style>
     :root {
       --bg: #0b1120; --card: #162032; --border: #283548;
@@ -72,12 +72,12 @@
   <!-- 2. 검색 및 빠른 칩 -->
   <div class="card">
     <div class="search-box">
-      <input type="text" id="tickerInput" placeholder="종목명 또는 티커 (예: 로빈후드, 일진전기, NVDA)" onkeydown="if(event.key==='Enter') runSearch()" />
+      <input type="text" id="tickerInput" placeholder="종목명 또는 티커 (예: 알파벳, 일진전기, 파미셀)" onkeydown="if(event.key==='Enter') runSearch()" />
       <button onclick="runSearch()">검색</button>
     </div>
     <div class="chips" id="chipContainer"></div>
     <div style="display:flex; gap:8px; margin-top:10px;">
-      <button class="sub-btn" style="flex:1;" onclick="scanSavedList()">⚡ 내 관심종목 전체 스캔</button>
+      <button class="sub-btn" style="flex:1;" onclick="scanSavedList()">⚡ 관심종목 일괄 스캔</button>
       <button class="sub-btn" onclick="saveCurrentToWatchlist()">⭐ 관심종목 추가</button>
     </div>
     <div id="statusMsg"></div>
@@ -134,14 +134,14 @@
 let currentFG = 29.3;
 let currentFGRating = "FEAR";
 let lastSearched = null;
-const memoryCache = {}; // 5분 캐시
+const memoryCache = {};
 
 const ALIAS_MAP = {
-  "로빈후드": "HOOD", "알파벳": "GOOGL", "구글": "GOOGL",
+  "로빈후드": "HOOD", "알파벳": "GOOGL", "구글": "GOOGL", "알파벳a": "GOOGL", "알파벳c": "GOOG",
   "일진전기": "103590.KS", "파미셀": "005690.KS", "삼성전자": "005930.KS",
   "sk하이닉스": "000660.KS", "엔비디아": "NVDA", "테슬라": "TSLA",
   "애플": "AAPL", "마이크로소프트": "MSFT", "아마존": "AMZN", "메타": "META",
-  "팔란티어": "PLTR", "브로드컴": "AVGO", "넷플릭스": "NFLX"
+  "팔란티어": "PLTR", "브로드컴": "AVGO", "넷플릭스": "NFLX", "s&p500": "SPY", "나스닥": "QQQ"
 };
 
 const DEFAULT_WATCH = [
@@ -177,12 +177,11 @@ function saveCurrentToWatchlist() {
     list.unshift({ label: lastSearched.name.slice(0, 8), ticker: lastSearched.ticker });
     localStorage.setItem("ios_stock_watch", JSON.stringify(list.slice(0, 15)));
     renderChips();
-    document.getElementById("statusMsg").textContent = `⭐ '${lastSearched.ticker}'가 상단 관심종목에 저장되었습니다.`;
+    document.getElementById("statusMsg").textContent = `⭐ '${lastSearched.ticker}'가 관심종목에 저장되었습니다.`;
   }
 }
 
-// 4초 타임아웃이 적용된 fetch 도우미
-async function fetchWithTimeout(url, ms = 4500) {
+async function fetchWithTimeout(url, ms = 6000) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), ms);
   try {
@@ -195,45 +194,44 @@ async function fetchWithTimeout(url, ms = 4500) {
   }
 }
 
-// 4중 프록시 자동 우회 호출기
-async function fetchTextSmart(targetUrl) {
-  const proxies = [
-    async () => {
-      const r = await fetchWithTimeout(`https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`);
-      if (!r.ok) throw new Error("fail");
-      return await r.text();
-    },
-    async () => {
-      const r = await fetchWithTimeout(`https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`);
+// 4개 프록시에 동시 요청 후 가장 빠른 정상 응답을 즉시 채택 (Promise.any)
+async function fetchFastRace(targetUrl) {
+  const tasks = [
+    (async () => {
+      const r = await fetchWithTimeout(`https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}&_=${Date.now()}`);
       if (!r.ok) throw new Error("fail");
       const j = await r.json();
-      if (!j.contents) throw new Error("empty");
+      if (!j.contents || j.contents.length < 30 || j.contents.includes("Too Many Requests")) throw new Error("bad");
       return j.contents;
-    },
-    async () => {
+    })(),
+    (async () => {
       const r = await fetchWithTimeout(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`);
       if (!r.ok) throw new Error("fail");
-      return await r.text();
-    },
-    async () => {
-      const r = await fetchWithTimeout(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`);
+      const t = await r.text();
+      if (!t || t.length < 30 || t.includes("Too Many Requests")) throw new Error("bad");
+      return t;
+    })(),
+    (async () => {
+      const r = await fetchWithTimeout(`https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`);
       if (!r.ok) throw new Error("fail");
-      return await r.text();
-    }
+      const t = await r.text();
+      if (!t || t.length < 30 || t.includes("Too Many Requests")) throw new Error("bad");
+      return t;
+    })(),
+    (async () => {
+      const r = await fetchWithTimeout(`https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`);
+      if (!r.ok) throw new Error("fail");
+      const t = await r.text();
+      if (!t || t.length < 30 || t.includes("Too Many Requests")) throw new Error("bad");
+      return t;
+    })()
   ];
-
-  for (const run of proxies) {
-    try {
-      const txt = await run();
-      if (txt && txt.length > 30 && !txt.includes("Too Many Requests")) return txt;
-    } catch (e) {}
-  }
-  throw new Error("중계 서버 일시 혼잡");
+  return await Promise.any(tasks);
 }
 
 async function loadFG() {
   try {
-    const raw = await fetchTextSmart("https://production.dataviz.cnn.io/index/fearandgreed/graphdata");
+    const raw = await fetchFastRace("https://production.dataviz.cnn.io/index/fearandgreed/graphdata");
     const data = JSON.parse(raw);
     currentFG = Number(data.fear_and_greed.score.toFixed(1));
     currentFGRating = data.fear_and_greed.rating.toUpperCase();
@@ -316,60 +314,68 @@ function calcIndicators(closes) {
   return { price, rsiNow, rsiPrev, pctB, upper, mid, lower, closes, histNow, macdText, sFg, sBb, sRsi, sMacd, total, verdict, color };
 }
 
+// 한국/미국 3개 데이터 소스를 동시에 경주시켜 가장 빠른 데이터 채택
 async function fetchStock(rawQuery) {
   const clean = rawQuery.trim();
-  const ticker = (ALIAS_MAP[clean.toLowerCase()] || clean).toUpperCase();
+  const normalizedKey = clean.toLowerCase().replace(/\s+/g, "");
+  let ticker = (ALIAS_MAP[normalizedKey] || clean).toUpperCase();
 
-  // 5분 이내 캐시 확인
+  // 6자리 숫자만 입력한 경우 자동으로 .KS 붙이기 (예: 103590 -> 103590.KS)
+  if (/^\d{6}$/.test(ticker)) ticker = ticker + ".KS";
+
   if (memoryCache[ticker] && (Date.now() - memoryCache[ticker].ts < 300000)) {
     return memoryCache[ticker].data;
   }
 
-  // 1) Yahoo Finance (query1 & query2 순차 시도)
-  for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
-    try {
-      const yfUrl = `https://${host}/v8/finance/chart/${encodeURIComponent(ticker)}?range=6mo&interval=1d`;
-      const json = JSON.parse(await fetchTextSmart(yfUrl));
+  const isKr = ticker.endsWith(".KS") || ticker.endsWith(".KQ");
+  const code = ticker.split(".")[0];
+
+  const sourcePromises = [
+    // 소스 1: Yahoo Finance query1
+    (async () => {
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=6mo&interval=1d`;
+      const json = JSON.parse(await fetchFastRace(url));
       const result = json.chart.result[0];
       const name = result.meta.shortName || ticker;
       const closes = result.indicators.quote[0].close.filter((v) => v !== null && !isNaN(v));
-      if (closes.length >= 35) {
-        const out = { name, ticker, ...calcIndicators(closes) };
-        memoryCache[ticker] = { ts: Date.now(), data: out };
-        return out;
-      }
-    } catch (e) {}
-  }
+      if (closes.length < 35) throw new Error("short");
+      return { name, ticker, ...calcIndicators(closes) };
+    })(),
+    // 소스 2: Yahoo Finance query2
+    (async () => {
+      const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=6mo&interval=1d`;
+      const json = JSON.parse(await fetchFastRace(url));
+      const result = json.chart.result[0];
+      const name = result.meta.shortName || ticker;
+      const closes = result.indicators.quote[0].close.filter((v) => v !== null && !isNaN(v));
+      if (closes.length < 35) throw new Error("short");
+      return { name, ticker, ...calcIndicators(closes) };
+    })()
+  ];
 
-  // 2) 한국 주식 전용 네이버 금융 차트 XML 백업
-  if (ticker.endsWith(".KS") || ticker.endsWith(".KQ")) {
-    try {
-      const code = ticker.split(".")[0];
+  // 소스 3: 한국 주식이면 네이버 금융 차트 XML, 미국 주식이면 Stooq CSV 동시 투입
+  if (isKr) {
+    sourcePromises.push((async () => {
       const naverUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${code}&timeframe=day&count=130&requestType=0`;
-      const xml = await fetchTextSmart(naverUrl);
+      const xml = await fetchFastRace(naverUrl);
       const matches = [...xml.matchAll(/data="([^"]+)"/g)];
       const closes = matches.map(m => parseFloat(m[1].split("|")[4])).filter(v => !isNaN(v));
-      if (closes.length >= 35) {
-        const out = { name: ticker, ticker, ...calcIndicators(closes) };
-        memoryCache[ticker] = { ts: Date.now(), data: out };
-        return out;
-      }
-    } catch (e) {}
+      if (closes.length < 35) throw new Error("short");
+      return { name: ticker, ticker, ...calcIndicators(closes) };
+    })());
+  } else {
+    sourcePromises.push((async () => {
+      const stooqSym = ticker.toLowerCase() + ".us";
+      const csv = await fetchFastRace(`https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSym)}&i=d`);
+      const closes = csv.trim().split("\n").slice(1).map((l) => parseFloat(l.split(",")[4])).filter((v) => !isNaN(v)).slice(-130);
+      if (closes.length < 35) throw new Error("short");
+      return { name: ticker, ticker, ...calcIndicators(closes) };
+    })());
   }
 
-  // 3) 미국 주식 Stooq CSV 백업
-  try {
-    const stooqSym = ticker.toLowerCase() + ".us";
-    const csv = await fetchTextSmart(`https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSym)}&i=d`);
-    const closes = csv.trim().split("\n").slice(1).map((l) => parseFloat(l.split(",")[4])).filter((v) => !isNaN(v)).slice(-130);
-    if (closes.length >= 35) {
-      const out = { name: ticker, ticker, ...calcIndicators(closes) };
-      memoryCache[ticker] = { ts: Date.now(), data: out };
-      return out;
-    }
-  } catch (e) {}
-
-  throw new Error("조회 실패");
+  const out = await Promise.any(sourcePromises);
+  memoryCache[ticker] = { ts: Date.now(), data: out };
+  return out;
 }
 
 function drawChart(d) {
@@ -393,7 +399,7 @@ async function runSearch() {
   const q = document.getElementById("tickerInput").value;
   if (!q.trim()) return;
   const status = document.getElementById("statusMsg");
-  status.textContent = "⏳ 주가 및 4대 지표 계산 중...";
+  status.textContent = "⏳ 가장 빠른 서버에서 주가·지표를 불러오는 중...";
   try {
     const d = await fetchStock(q);
     lastSearched = d;
@@ -417,9 +423,9 @@ async function runSearch() {
     document.getElementById("mFgSub").textContent = currentFGRating;
 
     drawChart(d);
-    status.textContent = "✅ 완료!";
+    status.textContent = "✅ 분석 완료!";
   } catch (e) {
-    status.textContent = "❌ 중계 서버 일시 혼잡입니다. 3초 후 한 번 더 눌러주세요.";
+    status.textContent = "❌ 종목 코드를 확인해 주세요 (코스피: 종목코드.KS, 코스닥: 종목코드.KQ, 미국: 티커).";
   }
 }
 
@@ -428,19 +434,14 @@ function quickSearch(t) {
   runSearch();
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
 async function scanSavedList() {
   const list = getWatchlist();
   const status = document.getElementById("statusMsg");
-  const rows = [];
-  for (let i = 0; i < list.length; i++) {
-    status.textContent = `⏳ 관심종목 스캔 중 (${i + 1}/${list.length}: ${list[i].label})...`;
-    try {
-      rows.push(await fetchStock(list[i].ticker));
-    } catch (e) {}
-    await sleep(400); // 차단 방지용 0.4초 간격
-  }
+  status.textContent = `⏳ ${list.length}개 관심종목 동시 스캔 중...`;
+
+  const settled = await Promise.allSettled(list.map((item) => fetchStock(item.ticker)));
+  const rows = settled.filter((r) => r.status === "fulfilled").map((r) => r.value);
+
   rows.sort((a, b) => b.total - a.total);
   document.getElementById("scanList").innerHTML = rows.map((r) => {
     const isKr = r.ticker.endsWith(".KS") || r.ticker.endsWith(".KQ");
